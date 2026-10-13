@@ -1,0 +1,19 @@
+{
+  "name": "Kisan Hit - प्रमाणित बीज, खाद एवं कृषि समाधान",
+  "short_name": "Kisan Hit",
+  "description": "Certified Hybrid Seeds, Fertilizers, and Crop Protection solutions for Indian Farmers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAF5",
+  "theme_color": "#1B5E20",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

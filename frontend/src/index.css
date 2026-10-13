@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply font-sans antialiased text-zinc-900 bg-agri-surface-light dark:text-zinc-100 dark:bg-agri-surface-darkBg transition-colors duration-200;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-zinc-300 dark:bg-zinc-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-zinc-400 dark:bg-zinc-600;
+}
+
+/* Custom utility classes */
+.agricultural-gradient {
+  background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 50%, #15803D 100%);
+}
+
+.harvest-gradient {
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+}
+
+.card-hover-effect {
+  @apply transition-all duration-300 hover:shadow-elevated hover:-translate-y-0.5;
+}
+
+/* Glassmorphism */
+.glass-nav {
+  @apply backdrop-blur-md bg-white/90 dark:bg-agri-surface-darkBg/90 border-b border-zinc-200/80 dark:border-zinc-800/80;
+}
+

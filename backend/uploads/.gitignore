@@ -1,0 +1,5 @@
+# Ignore all uploaded confidential KYC documents
+*
+!.gitignore
+!.gitkeep
+

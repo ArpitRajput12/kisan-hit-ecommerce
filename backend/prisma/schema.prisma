@@ -1,0 +1,582 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  SELLER
+  BUYER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum SellerKycStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum SettlementStatus {
+  PENDING
+  ELIGIBLE_FOR_PAYOUT
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  UPI
+  CARD
+  NET_BANKING
+  COD
+  WALLET
+}
+
+enum StockMovementType {
+  INITIAL_STOCK
+  RESTOCK
+  ORDER_RESERVED
+  ORDER_DEDUCTED
+  ORDER_CANCELLED
+  ADJUSTMENT
+  DAMAGE
+  RETURN
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  phone              String?             @unique
+  passwordHash       String?
+  fullName           String
+  role               Role                @default(BUYER)
+  status             UserStatus          @default(ACTIVE)
+  isEmailVerified    Boolean             @default(false)
+  isPhoneVerified    Boolean             @default(false)
+  googleId           String?             @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  sellerProfile      SellerProfile?
+  addresses          Address[]
+  orders             Order[]
+  cart               Cart?
+  products           Product[]           @relation("SellerProducts")
+  auditLogs          AuditLog[]
+  idempotencyRecords IdempotencyRecord[]
+  dealerSettlements  DealerSettlement[]  @relation("DealerSettlements")
+
+  @@index([email])
+  @@index([role])
+}
+
+model SellerProfile {
+  id                      String          @id @default(uuid())
+  userId                  String          @unique
+  user                    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName            String
+  gstin                   String?
+  panNumber               String?
+  farmOrStoreLocation     String?
+  kycStatus               SellerKycStatus @default(PENDING)
+  kycDocumentUrls         String[]        @default([])
+  rejectionReason         String?
+  approvedById            String?
+  approvedAt              DateTime?
+
+  // Local Secure KYC Document Identifiers (No AWS S3)
+  gstCertificateDoc       String?
+  formCDoc                String?         // Seed License Form C
+  formODoc                String?         // Fertilizer License Form O
+  pesticideLicenseDoc     String?         // Pesticide Dealership License
+  bankChequeDoc           String?         // Cancelled Bank Cheque
+
+  // Mandatory Business Information
+  ownerName               String?
+  businessType            String?         // Proprietorship / Partnership / Pvt Ltd / Other
+  shopAddress             String?         // Complete Shop Address
+
+  // Bank Account Details
+  bankAccountHolder       String?
+  bankAccountNumber       String?
+  bankIfscCode            String?
+
+  // Category Selling Permissions (Restricted by verified licences)
+  canSellSeeds            Boolean         @default(false) // Requires Form C / Form O
+  canSellFertilizers      Boolean         @default(false) // Requires FCO License
+  canSellPesticides       Boolean         @default(false) // Requires Pesticide License
+
+  // Specific License Numbers & Expiry Dates
+  seedLicenseNumber       String?
+  seedLicenseExpiry       DateTime?
+  fertilizerLicenseNumber String?
+  fertilizerLicenseExpiry DateTime?
+  pesticideLicenseNumber  String?
+  pesticideLicenseExpiry  DateTime?
+
+  // License Expiry & Compliance Monitoring
+  licenseExpiryDate       DateTime?
+  isSuspendedDueToExpiry  Boolean         @default(false)
+  lastExpiryAlertSentAt   DateTime?
+
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  banners                 PromotionalBanner[]
+  categoryPermissions    DealerCategoryPermission[]
+  combos                  DealerPestCombo[]
+
+  @@index([kycStatus])
+  @@index([licenseExpiryDate])
+}
+
+model Address {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName      String
+  phone         String
+  street        String
+  city          String
+  state         String
+  postalCode    String
+  country       String   @default("India")
+  villageTehsil String?
+  district      String?
+  landmark      String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Category {
+  id            String     @id @default(uuid())
+  name          String
+  slug          String     @unique
+  description   String?
+  imageUrl      String?
+  parentId      String?
+  parent        Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  subcategories Category[] @relation("CategoryHierarchy")
+  isActive      Boolean    @default(true)
+  products      Product[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([slug])
+  @@index([parentId])
+}
+
+model Product {
+  id           String      @id @default(uuid())
+  sellerId     String
+  seller       User        @relation("SellerProducts", fields: [sellerId], references: [id])
+  categoryId   String
+  category     Category    @relation(fields: [categoryId], references: [id])
+  name         String
+  slug         String      @unique
+  description  String
+  basePrice    Int         // stored in paise (e.g. ₹500 = 50000 paise)
+  unit         String      // e.g. "kg", "quintal", "liter", "bag", "packet", "piece"
+  sku          String      @unique
+  images       String[]    @default([])
+  isActive     Boolean     @default(true)
+  isApproved   Boolean     @default(false)
+  tags         String[]    @default([])
+  
+  // Phase 2 Agri Logistics & Tax
+  hsnCode              String?     // Agricultural HSN code (e.g., 3102 for fertilizers, 1209 for seeds)
+  isHeavyCargo         Boolean     @default(false) // 50kg bags and bulk cargo requiring freight shipping
+  weightKg             Float?      // Weight in kilograms
+
+  // Kisan Hit Agri-Commerce Enhancements
+  mrp                  Int?        // MRP in paise (e.g. ₹600 = 60000 paise)
+  toxicityLevel        String?     // 'RED' | 'YELLOW' | 'BLUE' | 'GREEN' (CIBRC Toxicity classification)
+  dosageRecommendation String?     // e.g. "250 ml / Acre" or "50 kg / Bigha"
+  suitableCrops        String[]    @default([])
+  isBanned             Boolean     @default(false) // for Super Admin chemical ban list
+
+  variants     ProductVariant[]
+  inventory    Inventory?
+  cartItems    CartItem[]
+  orderItems   OrderItem[]
+  pestDiseases PestDisease[]    @relation("PestRemedies")
+  combos       TreatmentCombo[] @relation("ComboItems")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([sellerId])
+  @@index([isActive, isApproved])
+}
+
+model ProductVariant {
+  id         String   @id @default(uuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  packSize   String   // e.g. "100 gm", "250 gm", "500 ml", "1 L", "5 kg", "50 kg"
+  pricePaise Int      // stored in paise
+  mrpPaise   Int?     // stored in paise
+  stock      Int      @default(100)
+  sku        String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  orderItems OrderItem[]
+
+  @@index([productId])
+}
+
+model Inventory {
+  id                 String           @id @default(uuid())
+  productId          String           @unique
+  product            Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity           Int              @default(0)
+  reservedQuantity   Int              @default(0)
+  lowStockThreshold  Int              @default(10)
+  warehouseLocation  String?
+  updatedAt          DateTime         @updatedAt
+  stockLogs          StockLog[]
+  batches            InventoryBatch[]
+
+  @@index([productId])
+}
+
+model InventoryBatch {
+  id                String    @id @default(uuid())
+  inventoryId       String
+  inventory         Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  batchNumber       String
+  manufacturingDate DateTime?
+  expiryDate        DateTime?
+  quantity          Int       @default(0)
+  reservedQuantity  Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([inventoryId])
+  @@index([expiryDate])
+}
+
+model StockLog {
+  id             String            @id @default(uuid())
+  inventoryId    String
+  inventory      Inventory         @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  changeQuantity Int
+  balanceAfter   Int
+  type           StockMovementType
+  reason         String?
+  referenceId    String?           // e.g., order ID, transfer receipt
+  createdAt      DateTime          @default(now())
+
+  @@index([inventoryId])
+  @@index([type])
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@index([productId])
+}
+
+model Order {
+  id               String         @id @default(uuid())
+  orderNumber      String         @unique
+  userId           String
+  user             User           @relation(fields: [userId], references: [id])
+  status           OrderStatus    @default(PENDING)
+  subtotalAmount   Int            // in paise
+  taxAmount        Int            // in paise
+  shippingFee      Int            // in paise
+  discountAmount   Int            @default(0) // in paise
+  totalAmount      Int            // in paise
+  shippingAddress  Json
+  paymentStatus    PaymentStatus  @default(PENDING)
+  paymentMethod    PaymentMethod?
+  idempotencyKey   String?
+  notes            String?
+
+  // Razorpay & Assisted Payment Integration
+  razorpayOrderId  String?        @unique
+  paymentLinkId    String?
+  paymentLinkUrl   String?
+
+  // Shipping & Logistics Tracking
+  awbTrackingNumber String?
+  carrierName       String?
+
+  // Order Cancellation & Refund Tracking
+  cancellationRequested Boolean        @default(false)
+  cancellationReason    String?
+
+  items            OrderItem[]
+  payments         Payment[]
+  invoice          Invoice?
+  settlements      DealerSettlement[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([orderNumber])
+  @@index([userId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([razorpayOrderId])
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  productName String
+  unitPrice   Int      // in paise snapshot
+  quantity    Int
+  totalPrice  Int      // in paise
+  batchNumber String?  // FEFO batch allocated
+  variantId   String?
+  variant     ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  packSize    String?  // e.g. "500 gm", "250 ml", "1 L"
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  transactionId String?       @unique
+  provider      String        @default("MOCK_GATEWAY") // "RAZORPAY", "MOCK_GATEWAY", "CASH_ON_DELIVERY"
+  amount        Int           // in paise
+  status        PaymentStatus @default(PENDING)
+  rawResponse   Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([transactionId])
+}
+
+model Invoice {
+  id             String   @id @default(uuid())
+  orderId        String   @unique
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  invoiceNumber  String   @unique
+  hsnCodes       String[] @default([])
+  subtotalAmount Int      // in paise
+  cgstAmount     Int      // in paise (2.5% for intra-state)
+  sgstAmount     Int      // in paise (2.5% for intra-state)
+  igstAmount     Int      @default(0) // in paise (5% for inter-state)
+  totalAmount    Int      // in paise
+  invoiceData    Json
+  pdfPath        String?
+  createdAt      DateTime @default(now())
+
+  @@index([invoiceNumber])
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid())
+  key          String
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint     String
+  statusCode   Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@unique([key, userId])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+}
+
+model PromotionalBanner {
+  id              String        @id @default(uuid())
+  dealerProfileId String
+  dealerProfile   SellerProfile @relation(fields: [dealerProfileId], references: [id], onDelete: Cascade)
+  title           String
+  imageUrl        String
+  targetUrl       String        // e.g. "/products?category=certified-seeds" or "/products/sample-slug"
+  startDate       DateTime      @default(now())
+  endDate         DateTime?
+  isActive        Boolean       @default(true)
+  clicksCount     Int           @default(0)
+  impressions     Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([dealerProfileId])
+  @@index([isActive])
+}
+
+model PestDisease {
+  id                  String             @id @default(uuid())
+  slug                String             @unique
+  nameEn              String
+  nameHi              String
+  imageUrl            String?
+  symptomsEn          String?
+  symptomsHi          String?
+  affectedCrops       String[]           @default([])
+  recommendedProducts Product[]          @relation("PestRemedies")
+  treatmentCombos     TreatmentCombo[]
+  combos              DealerPestCombo[]
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([slug])
+}
+
+model DealerPestCombo {
+  id              String        @id @default(uuid())
+  dealerProfileId String
+  dealerProfile   SellerProfile @relation(fields: [dealerProfileId], references: [id], onDelete: Cascade)
+  pestDiseaseId   String
+  pestDisease     PestDisease   @relation(fields: [pestDiseaseId], references: [id], onDelete: Cascade)
+  comboTitle      String        // e.g., "थ्रिप्स संपूर्ण नियंत्रण किट (Thrips Super Combo)"
+  description     String?
+  productIds      String[]      // Array of Product IDs included in this kit (e.g., [PesticideId, SpreaderId, MicronutrientId])
+  totalMrpPaise   Int           // Sum of individual MRPs
+  comboPricePaise Int           // Special discounted bundle selling price
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([dealerProfileId])
+  @@index([pestDiseaseId])
+  @@index([isActive])
+}
+
+model TreatmentCombo {
+  id                   String      @id @default(uuid())
+  pestDiseaseId        String
+  pestDisease          PestDisease @relation(fields: [pestDiseaseId], references: [id], onDelete: Cascade)
+  titleEn              String
+  titleHi              String
+  descriptionEn        String?
+  descriptionHi        String?
+  comboDiscountPercent Int
+  comboPricePaise      Int
+  products             Product[]   @relation("ComboItems")
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([pestDiseaseId])
+}
+
+model DealerSettlement {
+  id               String           @id @default(uuid())
+  orderId          String
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dealerId         String           // Seller's User id
+  dealer           User             @relation("DealerSettlements", fields: [dealerId], references: [id])
+  grossAmountPaise Int              // in paise
+  commissionPaise  Int              // in paise (e.g. 5% platform fee)
+  netPayablePaise  Int              // in paise (95% to dealer)
+  status           SettlementStatus @default(PENDING)
+  payoutDate       DateTime?
+  referenceNote    String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([orderId, dealerId])
+  @@index([orderId])
+  @@index([dealerId])
+  @@index([status])
+}
+
+model DealerCategoryPermission {
+  id               String         @id @default(uuid())
+  dealerProfileId  String
+  dealerProfile    SellerProfile  @relation(fields: [dealerProfileId], references: [id], onDelete: Cascade)
+  categorySlug     String         // "seeds", "pesticides", "fertilizers", "machinery", "nutrition"
+  licenseDocUrl    String?
+  licenseNumber    String?
+  licenseExpiry    DateTime?
+  status           ApprovalStatus @default(PENDING)
+  rejectionReason  String?
+  approvedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([dealerProfileId, categorySlug])
+  @@index([dealerProfileId])
+  @@index([categorySlug])
+  @@index([status])
+}
+
